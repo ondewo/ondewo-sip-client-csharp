@@ -2,7 +2,7 @@
 
 *****************
 
-## Release ONDEWO SIP Csharp Client 1.0.0
+## Release ONDEWO SIP Csharp Client 5.4.0
 
 ### New Features
 
