@@ -51,21 +51,21 @@ That resolves the latest stable version. To pin one — which is what you want i
 the client version tracks the ONDEWO SIP API in major and minor:
 
 ```shell
-dotnet add package Ondewo.SIP.Client --version 5.4.0
+dotnet add package Ondewo.SIP.Client --version 5.4.1
 ```
 
 Or write the `PackageReference` item into your `.csproj` directly:
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Ondewo.SIP.Client" Version="5.4.0" />
+  <PackageReference Include="Ondewo.SIP.Client" Version="5.4.1" />
 </ItemGroup>
 ```
 
 In the Visual Studio Package Manager Console:
 
 ```powershell
-Install-Package Ondewo.SIP.Client -Version 5.4.0
+Install-Package Ondewo.SIP.Client -Version 5.4.1
 ```
 
 A few things worth knowing before you take the dependency:
