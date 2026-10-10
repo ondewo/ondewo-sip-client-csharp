@@ -51,21 +51,21 @@ That resolves the latest stable version. To pin one — which is what you want i
 the client version tracks the ONDEWO SIP API in major and minor:
 
 ```shell
-dotnet add package Ondewo.SIP.Client --version 5.4.1
+dotnet add package Ondewo.SIP.Client --version 5.5.0
 ```
 
 Or write the `PackageReference` item into your `.csproj` directly:
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Ondewo.SIP.Client" Version="5.4.1" />
+  <PackageReference Include="Ondewo.SIP.Client" Version="5.5.0" />
 </ItemGroup>
 ```
 
 In the Visual Studio Package Manager Console:
 
 ```powershell
-Install-Package Ondewo.SIP.Client -Version 5.4.1
+Install-Package Ondewo.SIP.Client -Version 5.5.0
 ```
 
 A few things worth knowing before you take the dependency:
@@ -82,7 +82,7 @@ A few things worth knowing before you take the dependency:
 - **Debugging.** Every release also publishes a `.snupkg` symbol package to the nuget.org symbol
   server, so stepping into the generated stubs works once `https://symbols.nuget.org/download/symbols`
   is enabled in your debugger's symbol settings.
-- **Versioning.** `Ondewo.SIP.Client` **5.4.x** is generated from ONDEWO SIP API **5.4.0**: major
+- **Versioning.** `Ondewo.SIP.Client` **5.5.x** is generated from ONDEWO SIP API **5.5.0**: major
   and minor always match the API, the patch number is this client's own.
 
 From source:
