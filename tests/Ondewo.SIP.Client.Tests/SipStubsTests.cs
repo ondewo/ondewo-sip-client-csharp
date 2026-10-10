@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using Google.Protobuf;
+using Google.Protobuf.Reflection;
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using Grpc.Net.Client;
@@ -15,8 +16,8 @@ namespace Ondewo.Sip.Client.Tests
     /// <para>
     /// This is the only test file that has to be rewritten when the setup is replicated to another
     /// ONDEWO product - <see cref="GeneratedStubsTests"/> carries over unchanged. The SIP API has
-    /// neither a streaming RPC nor a proto3 <c>optional</c> field, so it carries no case for
-    /// either.
+    /// no proto3 <c>optional</c> field, so it carries no case for one; its single streaming RPC,
+    /// <c>SipStreamCallAudio</c>, is pinned below.
     /// </para>
     /// </summary>
     public class SipStubsTests
@@ -200,6 +201,7 @@ namespace Ondewo.Sip.Client.Tests
                          "SipStartSession", "SipEndSession", "SipStartCall", "SipEndCall",
                          "SipTransferCall", "SipRegisterAccount", "SipGetSipStatus",
                          "SipGetSipStatusHistory", "SipPlayWavFiles", "SipMute", "SipUnMute",
+                         "SipReportAnsweringMachineDetected", "SipSetCallMediaControl",
                      })
             {
                 Assert.Contains(rpc, clientMethods);
@@ -208,19 +210,119 @@ namespace Ondewo.Sip.Client.Tests
         }
 
         /// <summary>
-        /// The SIP API declares no streaming RPC at all - every method is unary, which is what
-        /// makes the unary/Async pair above the complete client surface.
+        /// Every RPC is unary except <c>SipStreamCallAudio</c> (5.5.0), which is bidirectional: the
+        /// generated client exposes it as a single call returning an <see cref="AsyncDuplexStreamingCall{TRequest, TResponse}"/>,
+        /// with no blocking and no <c>Async</c> variant.
         /// </summary>
         [Fact]
-        public void EveryRpcIsUnary()
+        public void OnlySipStreamCallAudioStreamsAndItStreamsBothWays()
         {
-            Assert.NotEmpty(Sip.Descriptor.Methods);
-            Assert.All(Sip.Descriptor.Methods, method => Assert.False(method.IsClientStreaming));
-            Assert.All(Sip.Descriptor.Methods, method => Assert.False(method.IsServerStreaming));
+            Assert.Equal(14, Sip.Descriptor.Methods.Count);
+
+            var streaming = Sip.Descriptor.Methods
+                .Where(method => method.IsClientStreaming || method.IsServerStreaming)
+                .ToList();
+
+            var audio = Assert.Single(streaming);
+            Assert.Equal("SipStreamCallAudio", audio.Name);
+            Assert.True(audio.IsClientStreaming);
+            Assert.True(audio.IsServerStreaming);
+            Assert.Equal("ondewo.sip.SipCallAudioRequest", audio.InputType.FullName);
+            Assert.Equal("ondewo.sip.SipCallAudioResponse", audio.OutputType.FullName);
+
+            var call = typeof(Sip.SipClient).GetMethods()
+                .Where(method => method.Name == "SipStreamCallAudio")
+                .ToList();
+            Assert.NotEmpty(call);
+            Assert.All(call, method => Assert.Equal(
+                typeof(AsyncDuplexStreamingCall<SipCallAudioRequest, SipCallAudioResponse>),
+                method.ReturnType));
+            Assert.DoesNotContain(
+                typeof(Sip.SipClient).GetMethods(),
+                method => method.Name == "SipStreamCallAudioAsync");
         }
 
         /// <summary>
-        /// Six of the eleven RPCs take or return <c>google.protobuf.Empty</c>, which is supplied by
+        /// SIP API 5.5.0 declares <c>idempotency_level = NO_SIDE_EFFECTS</c> on the two status reads
+        /// and on nothing else; the option travels with the generated descriptor.
+        /// </summary>
+        [Fact]
+        public void OnlyTheStatusReadsDeclareNoSideEffects()
+        {
+            string[] noSideEffects = Sip.Descriptor.Methods
+                .Where(method => method.GetOptions()?.IdempotencyLevel
+                                 == MethodOptions.Types.IdempotencyLevel.NoSideEffects)
+                .Select(method => method.Name)
+                .OrderBy(name => name, StringComparer.Ordinal)
+                .ToArray();
+
+            Assert.Equal(new[] { "SipGetSipStatus", "SipGetSipStatusHistory" }, noSideEffects);
+            Assert.Equal(
+                MethodOptions.Types.IdempotencyLevel.IdempotencyUnknown,
+                Sip.Descriptor.FindMethodByName("SipEndCall").GetOptions()?.IdempotencyLevel
+                    ?? MethodOptions.Types.IdempotencyLevel.IdempotencyUnknown);
+        }
+
+        [Fact]
+        public void CallAudioRequestOneofRoundTripsConfigAndFrame()
+        {
+            var config = new SipCallAudioRequest
+            {
+                Config = new SipCallAudioConfig
+                {
+                    Mode = SipCallAudioMode.Talk,
+                    SampleRateHz = 16000,
+                    FrameMs = 20,
+                    TakeOver = true,
+                    StreamId = "operator-1",
+                },
+            };
+
+            SipCallAudioRequest parsed = SipCallAudioRequest.Parser.ParseFrom(config.ToByteArray());
+
+            Assert.Equal(SipCallAudioRequest.RequestOneofCase.Config, parsed.RequestCase);
+            Assert.Equal(config, parsed);
+            Assert.Equal(16000, parsed.Config.SampleRateHz);
+            Assert.True(parsed.Config.TakeOver);
+
+            var muted = new SipCallAudioRequest { AgentMuted = true };
+            Assert.Equal(
+                SipCallAudioRequest.RequestOneofCase.AgentMuted,
+                SipCallAudioRequest.Parser.ParseFrom(muted.ToByteArray()).RequestCase);
+        }
+
+        [Fact]
+        public void MediaControlAndAnsweringMachineFieldsRoundTrip()
+        {
+            var request = new SipSetCallMediaControlRequest
+            {
+                BotVoice = MediaControlSetting.Off,
+                BotListening = MediaControlSetting.On,
+                ParticipantsPresent = true,
+            };
+            Assert.Equal(request, SipSetCallMediaControlRequest.Parser.ParseFrom(request.ToByteArray()));
+
+            var status = new SipStatus
+            {
+                StatusType = SipStatus.Types.StatusType.OutgoingCallAnsweringMachineDetected,
+                CallId = "call-1",
+                BotMuted = true,
+                ListeningPaused = true,
+                CallAudioStreams = 2,
+                SipResponseCode = 486,
+                AmdResult = new AnsweringMachineDetectionResult { CallId = "call-1" },
+            };
+            SipStatus parsed = SipStatus.Parser.ParseFrom(status.ToByteArray());
+
+            Assert.Equal(status, parsed);
+            Assert.Equal(22, (int)parsed.StatusType);
+            Assert.Equal("call-1", parsed.AmdResult.CallId);
+
+            Assert.Equal(3, (int)SipEndCallRequest.Types.EndCallReason.Transferred);
+        }
+
+        /// <summary>
+        /// Several RPCs take or return <c>google.protobuf.Empty</c>, which is supplied by
         /// the Google.Protobuf package rather than generated into this assembly.
         /// </summary>
         [Fact]
