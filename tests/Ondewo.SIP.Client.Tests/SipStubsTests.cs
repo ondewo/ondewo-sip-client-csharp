@@ -1,5 +1,8 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Reflection;
 using Google.Protobuf;
 using Google.Protobuf.Reflection;
 using Google.Protobuf.WellKnownTypes;
@@ -7,6 +10,7 @@ using Grpc.Core;
 using Grpc.Net.Client;
 using Ondewo.Sip;
 using Xunit;
+using Type = System.Type;
 
 namespace Ondewo.Sip.Client.Tests
 {
@@ -16,8 +20,13 @@ namespace Ondewo.Sip.Client.Tests
     /// <para>
     /// This is the only test file that has to be rewritten when the setup is replicated to another
     /// ONDEWO product - <see cref="GeneratedStubsTests"/> carries over unchanged. The SIP API has
-    /// no proto3 <c>optional</c> field, so it carries no case for one; its single streaming RPC,
-    /// <c>SipStreamCallAudio</c>, is pinned below.
+    /// no proto3 <c>optional</c> field, so it carries no case for one; its streaming RPC
+    /// <c>SipStreamCallAudio</c> is pinned below.
+    /// </para>
+    /// <para>
+    /// RPC names written here are MUST-CONTAIN pins - RPCs consumers rely on - and never the whole
+    /// surface: the complete set of services and RPCs is DERIVED from the protos (or the committed
+    /// stubs) by <see cref="SipApiSurface"/>, so the next API release adds RPCs without editing this file.
     /// </para>
     /// </summary>
     public class SipStubsTests
@@ -189,6 +198,7 @@ namespace Ondewo.Sip.Client.Tests
             Assert.NotNull(client);
             Assert.Equal("ondewo.sip.Sip", Sip.Descriptor.FullName);
             Assert.Contains(Sip.Descriptor.Methods, method => method.Name == "SipStartCall");
+            Assert.Equal(SipApiSurface.RpcNamesOf("ondewo.sip.Sip"), Sip.Descriptor.Methods.Select(method => method.Name));
 
             string[] clientMethods = typeof(Sip.SipClient)
                 .GetMethods()
@@ -210,21 +220,17 @@ namespace Ondewo.Sip.Client.Tests
         }
 
         /// <summary>
-        /// Every RPC is unary except <c>SipStreamCallAudio</c> (5.5.0), which is bidirectional: the
-        /// generated client exposes it as a single call returning an <see cref="AsyncDuplexStreamingCall{TRequest, TResponse}"/>,
-        /// with no blocking and no <c>Async</c> variant.
+        /// <c>SipStreamCallAudio</c> (5.5.0) is bidirectional: the generated client exposes it as a
+        /// single call returning an <see cref="AsyncDuplexStreamingCall{TRequest, TResponse}"/>, with no
+        /// blocking and no <c>Async</c> variant. Which RPCs stream at all is derived from the protos
+        /// (<see cref="EveryServiceTheSipApiDeclaresIsGeneratedWithEveryRpcAndItsStreamingShape"/>).
         /// </summary>
         [Fact]
-        public void OnlySipStreamCallAudioStreamsAndItStreamsBothWays()
+        public void SipStreamCallAudioStreamsBothWays()
         {
-            Assert.Equal(14, Sip.Descriptor.Methods.Count);
+            MethodDescriptor audio = Sip.Descriptor.FindMethodByName("SipStreamCallAudio");
 
-            var streaming = Sip.Descriptor.Methods
-                .Where(method => method.IsClientStreaming || method.IsServerStreaming)
-                .ToList();
-
-            var audio = Assert.Single(streaming);
-            Assert.Equal("SipStreamCallAudio", audio.Name);
+            Assert.NotNull(audio);
             Assert.True(audio.IsClientStreaming);
             Assert.True(audio.IsServerStreaming);
             Assert.Equal("ondewo.sip.SipCallAudioRequest", audio.InputType.FullName);
@@ -244,10 +250,11 @@ namespace Ondewo.Sip.Client.Tests
 
         /// <summary>
         /// SIP API 5.5.0 declares <c>idempotency_level = NO_SIDE_EFFECTS</c> on the two status reads
-        /// and on nothing else; the option travels with the generated descriptor.
+        /// (a must-contain pin: a later API may mark further reads) and not on <c>SipEndCall</c>; the
+        /// option travels with the generated descriptor.
         /// </summary>
         [Fact]
-        public void OnlyTheStatusReadsDeclareNoSideEffects()
+        public void TheStatusReadsDeclareNoSideEffects()
         {
             string[] noSideEffects = Sip.Descriptor.Methods
                 .Where(method => method.GetOptions()?.IdempotencyLevel
@@ -256,7 +263,9 @@ namespace Ondewo.Sip.Client.Tests
                 .OrderBy(name => name, StringComparer.Ordinal)
                 .ToArray();
 
-            Assert.Equal(new[] { "SipGetSipStatus", "SipGetSipStatusHistory" }, noSideEffects);
+            Assert.Contains("SipGetSipStatus", noSideEffects);
+            Assert.Contains("SipGetSipStatusHistory", noSideEffects);
+            Assert.DoesNotContain("SipEndCall", noSideEffects);
             Assert.Equal(
                 MethodOptions.Types.IdempotencyLevel.IdempotencyUnknown,
                 Sip.Descriptor.FindMethodByName("SipEndCall").GetOptions()?.IdempotencyLevel
@@ -334,6 +343,104 @@ namespace Ondewo.Sip.Client.Tests
             Assert.NotSame(
                 typeof(SipStatus).Assembly,
                 typeof(Empty).Assembly);
+        }
+
+        /// <summary>
+        /// Every service the SIP protos declare is generated - nothing more, nothing less - with exactly
+        /// the declared RPCs, in declaration order, each with its declared streaming shape, and a client
+        /// that exposes it: a unary RPC as a blocking and an <c>...Async</c> method, a streaming RPC as one.
+        /// Derived from the protos (or the committed stubs), so a new RPC needs no test edit.
+        /// </summary>
+        [Fact]
+        public void EveryServiceTheSipApiDeclaresIsGeneratedWithEveryRpcAndItsStreamingShape()
+        {
+            using GrpcChannel channel = GrpcChannel.ForAddress(DummyTarget);
+            Type[] serviceClasses = ProductStubs.Assembly.GetTypes()
+                .Where(type => type.GetProperty("Descriptor", BindingFlags.Public | BindingFlags.Static)?.PropertyType == typeof(ServiceDescriptor))
+                .Where(type => ServiceDescriptorOf(type).FullName.StartsWith(SipApiSurface.Package + ".", StringComparison.Ordinal))
+                .ToArray();
+
+            Assert.Equal(
+                SipApiSurface.Services.Keys.OrderBy(name => name, StringComparer.Ordinal),
+                serviceClasses.Select(type => ServiceDescriptorOf(type).FullName).OrderBy(name => name, StringComparer.Ordinal));
+
+            foreach (Type serviceClass in serviceClasses)
+            {
+                ServiceDescriptor service = ServiceDescriptorOf(serviceClass);
+                IReadOnlyList<SipApiSurface.Rpc> declared = SipApiSurface.RpcsOf(service.FullName);
+                Assert.Equal(declared.Select(rpc => rpc.Name), service.Methods.Select(method => method.Name));
+
+                Type clientClass = serviceClass.GetNestedType(serviceClass.Name + "Client");
+                Assert.NotNull(clientClass);
+                Assert.NotNull(Activator.CreateInstance(clientClass, channel));
+                string[] clientMethods = clientClass.GetMethods().Select(method => method.Name).Distinct().ToArray();
+
+                foreach (SipApiSurface.Rpc rpc in declared)
+                {
+                    MethodDescriptor method = service.FindMethodByName(rpc.Name);
+                    Assert.Equal(rpc.ClientStreaming, method.IsClientStreaming);
+                    Assert.Equal(rpc.ServerStreaming, method.IsServerStreaming);
+                    MethodType expected = (rpc.ClientStreaming, rpc.ServerStreaming) switch
+                    {
+                        (false, false) => MethodType.Unary,
+                        (false, true) => MethodType.ServerStreaming,
+                        (true, false) => MethodType.ClientStreaming,
+                        _ => MethodType.DuplexStreaming,
+                    };
+                    Assert.Equal(expected, MethodTypeOf(serviceClass, rpc.Name));
+                    Assert.Contains(rpc.Name, clientMethods);
+                    if (expected == MethodType.Unary)
+                    {
+                        Assert.Contains(rpc.Name + "Async", clientMethods);
+                    }
+                    else
+                    {
+                        Assert.DoesNotContain(rpc.Name + "Async", clientMethods);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// The derivation itself is pinned, so the test above cannot pass by deriving nothing: both
+        /// parsers read real declarations, the product's service is found, and CI - which checks the
+        /// api submodule out - really reads the protos rather than falling back.
+        /// </summary>
+        [Fact]
+        public void TheDerivedApiSurfaceReadsRealDeclarations()
+        {
+            Dictionary<string, List<SipApiSurface.Rpc>> proto = SipApiSurface.ParseProto(
+                "syntax = \"proto3\";\npackage ondewo.sip;\n// rpc Commented (A) returns (B);\n" +
+                "service S {\n  rpc One (A) returns (B) { option (x) = { get: \"//v1/{name}\" }; }\n" +
+                "  rpc Two(stream A)\n    returns (stream B);\n  rpc Three (A) returns (stream B);\n}\n");
+            Assert.Equal(
+                new[] { new SipApiSurface.Rpc("One", false, false), new SipApiSurface.Rpc("Two", true, true), new SipApiSurface.Rpc("Three", false, true) },
+                Assert.Single(proto, entry => entry.Key == "ondewo.sip.S").Value);
+
+            Dictionary<string, List<SipApiSurface.Rpc>> stub = SipApiSurface.ParseStub(
+                File.ReadAllText(Path.Combine(SipApiSurface.RepositoryRoot, "api", "Ondewo", "Sip", "SipGrpc.cs")));
+            Assert.Contains(new SipApiSurface.Rpc("SipStreamCallAudio", true, true), stub["ondewo.sip.Sip"]);
+            Assert.Contains(new SipApiSurface.Rpc("SipStartCall", false, false), stub["ondewo.sip.Sip"]);
+
+            Assert.Contains("ondewo.sip.Sip", SipApiSurface.Services.Keys);
+            Assert.Contains(new SipApiSurface.Rpc("SipStreamCallAudio", true, true), SipApiSurface.RpcsOf("ondewo.sip.Sip"));
+
+            if (Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true")
+            {
+                Assert.Equal("protos", SipApiSurface.Source);
+            }
+        }
+
+        private static ServiceDescriptor ServiceDescriptorOf(Type serviceClass) =>
+            (ServiceDescriptor)serviceClass.GetProperty("Descriptor", BindingFlags.Public | BindingFlags.Static)!.GetValue(null)!;
+
+        private static MethodType MethodTypeOf(Type serviceClass, string rpc)
+        {
+            FieldInfo field = serviceClass.GetField(
+                "__Method_" + rpc, BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.NotNull(field);
+
+            return Assert.IsAssignableFrom<IMethod>(field.GetValue(null)).Type;
         }
     }
 }
