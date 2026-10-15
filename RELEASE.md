@@ -2,6 +2,14 @@
 
 *****************
 
+## Release ONDEWO SIP Csharp Client 5.5.2
+
+### Improvements
+
+* Tracking API Version [5.5.2](https://github.com/ondewo/ondewo-sip-api/releases/tag/5.5.2) ( [Documentation](https://ondewo.github.io/ondewo-sip-api/) )
+
+*****************
+
 ## Release ONDEWO SIP Csharp Client 5.5.0
 
 ### New Features
