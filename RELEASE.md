@@ -2,6 +2,24 @@
 
 *****************
 
+## Release ONDEWO SIP Csharp Client 5.7.2
+
+### New Features
+
+* [[OND236-120]](https://ondewo.atlassian.net/browse/OND236-120) Keycloak token provider with offline-token start-up, matching ondewo-sip-client-python 5.7.2: the client config takes a Keycloak *offline* refresh token instead of a password, and the provider then starts with a `grant_type=refresh_token` exchange and never sends a password grant. A Keycloak config needs a password OR a refresh token; when both are set the token wins, and a refused token is never answered with a password login. The token is redacted like the password and takes part (hashed) in the shared-provider registry key, so two configs of different tenants never share a provider. In `auth/KeycloakTokenProvider.cs` and `auth/KeycloakTokenProviderRegistry.cs`, configured through `OndewoClientConfig` and used by `OndewoChannelFactory`.
+
+### Bug Fixes
+
+* [[OND236-120]](https://ondewo.atlassian.net/browse/OND236-120) Keycloak token refresh survives every failure: a failed refresh backs off with full jitter from 5 s doubling up to 300 s, the background and the per-call refresh share that backoff, and a success resets it. A token that is still valid keeps being served when its refresh fails inside the 30 s expiry leeway; only an EXPIRED token raises the Keycloak authentication error, whatever failed underneath (unreachable endpoint, timeout, a non-2xx status, a body that is not a JSON object, a missing `access_token`, a non-numeric `expires_in`). A malformed response changes no provider state. The token-endpoint timeout is 10 s, quoted error bodies are cut at 500 characters, and no credential reaches a log line or an error message.
+* [[OND236-120]](https://ondewo.atlassian.net/browse/OND236-120) A NaN backoff jitter counts as 0, so the delay is the 5 s base instead of NaN.
+
+### Improvements
+
+* Tracking API Version [5.7.0](https://github.com/ondewo/ondewo-sip-api/releases/tag/5.7.0) ( [Documentation](https://ondewo.github.io/ondewo-sip-api/) )
+* [[OND236-120]](https://ondewo.atlassian.net/browse/OND236-120) Tests: the cases of the python SDK's `test_keycloak_refresh_resilience.py` and `test_client_config_refresh_token.py`, ported to `KeycloakTokenProviderTests.cs` and `KeycloakConfigAndRegistryTests.cs`, plus this SDK's edge cases.
+
+*****************
+
 ## Release ONDEWO SIP Csharp Client 5.7.0
 
 ### Improvements
